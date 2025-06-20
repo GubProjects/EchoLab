@@ -97,21 +97,71 @@ kind: Deployment
 metadata:
   name: echoserver
   namespace: prod
+  labels:
+    app.kubernetes.io/name: echoserver
+    app.kubernetes.io/version: "1.0"
+  annotations:
+    prometheus.io/scrape: "true"        # Enable Prometheus metrics scraping
+    prometheus.io/port: "8080"          # Define the Prometheus target port
 spec:
-  replicas: 2
+  replicas: 3                           # High availability with 3 replicas
   selector:
     matchLabels:
-      app: echoserver
+      app.kubernetes.io/name: echoserver
   template:
     metadata:
       labels:
-        app: echoserver
+        app.kubernetes.io/name: echoserver
+        app.kubernetes.io/version: "1.0"
     spec:
+      terminationGracePeriodSeconds: 10  # Allow app to shut down cleanly
+      affinity:
+        podAntiAffinity:                 # Spread pods across nodes when possible
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: echoserver
+              topologyKey: kubernetes.io/hostname
       containers:
       - name: echoserver
-        image: k8s.gcr.io/echoserver:1.4
+        image: gcr.io/google_containers/echoserver:1.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
+          name: http
+        env:
+        - name: PORT                    # Optional: Set explicit port environment variable
+          value: "8080"
+        resources:                      # Lightweight resource limits
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+        livenessProbe:                  # Restart if not responding
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:                # Traffic only routed to ready pods
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 2
+      tolerations:
+      - key: "cloud.google.com/gke-preemptible"  # Allow use of cheaper preemptible nodes
+        operator: "Exists"
+        effect: "NoSchedule"
+
 ```
 
 **`service.yaml`**
@@ -120,16 +170,20 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: echoserver-service
+  name: echoserver
   namespace: prod
+  labels:
+    app.kubernetes.io/name: echoserver
+    app.kubernetes.io/version: "1.0"
 spec:
-  selector:
-    app: echoserver
+  type: ClusterIP
   ports:
-  - protocol: TCP
-    port: 80
-    targetPort: 8080
-  type: LoadBalancer
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: echoserver
+
 ```
 
 Apply and commit:
